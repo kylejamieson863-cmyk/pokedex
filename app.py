@@ -51,7 +51,7 @@ st.markdown("""
 
 # --- Google Sheets Public Connection ---
 # Replace this with your actual Google Sheet ID from your URL (the long string between /d/ and /edit)
-SPREADSHEET_ID = "1dlzgb3cwAahXU1B-Ngsqt5wgzu-sm38-Ts-SnF..." 
+SPREADSHEET_ID = "/d/1dIzgb3cwAahXU1B-NGsqt5wgzU-sm38-Ts-SnFfWYDQ/edit?pli=1&gid=1102552568#gid=1102552568" 
 
 # Define your tab names and their corresponding GIDs (found at the end of your browser URL when clicking a tab)
 SHEETS_MAP = {
