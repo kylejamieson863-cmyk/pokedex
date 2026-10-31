@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import base64
 import json
 
 # --- Page Configuration & Pitch-Black Theme Styling ---
@@ -52,13 +53,15 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Google Sheets Connection ---
+# --- Google Sheets Connection via Base64 Secret ---
 @st.cache_resource
 def init_connection():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     
-    if "gcp_service_account" in st.secrets:
-        creds_dict = dict(st.secrets["gcp_service_account"])
+    if "gcp_service_account" in st.secrets and "encoded_key" in st.secrets["gcp_service_account"]:
+        encoded_bytes = st.secrets["gcp_service_account"]["encoded_key"].encode("utf-8")
+        decoded_json = base64.b64decode(encoded_bytes).decode("utf-8")
+        creds_dict = json.loads(decoded_json)
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     else:
         creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
@@ -69,7 +72,7 @@ def init_connection():
 try:
     gc = init_connection()
 except Exception as e:
-    st.error(f"Failed to connect to Google Sheets. Check your credentials in Streamlit Secrets. Error: {e}")
+    st.error(f"Failed to connect to Google Sheets. Check your credentials setup in Streamlit Secrets. Error: {e}")
     st.stop()
 
 # --- App Header ---
@@ -90,7 +93,7 @@ df = pd.DataFrame(data)
 # Ensure numeric quantities
 for col in ['Regular Qty', 'Reverse Holo Qty', 'Holo / Ultra Rare Qty']:
     if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='fillna').fillna(0).astype(int)
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
 
 # Calculate dynamic status if empty
 if 'Status' not in df.columns or df['Status'].isna().all():
