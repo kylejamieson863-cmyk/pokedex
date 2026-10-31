@@ -1,0 +1,172 @@
+import streamlit as st
+import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import json
+
+# --- Page Configuration & Pitch-Black Theme Styling ---
+st.set_page_config(
+    page_title="Pokémon Master Set Dex",
+    page_icon="⚡",
+    layout="wide"
+)
+
+st.markdown("""
+    <style>
+    .stApp {
+        background-color: #121212;
+        color: #E0E0E0;
+    }
+    .card-box {
+        background-color: #1E1E1E;
+        border: 1px solid #2C2C2C;
+        padding: 15px;
+        border-radius: 10px;
+        text-align: center;
+        margin-bottom: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    .have-badge {
+        background-color: #003311;
+        color: #00FF66;
+        padding: 4px 10px;
+        border-radius: 5px;
+        font-weight: bold;
+        font-size: 0.85em;
+    }
+    .missing-badge {
+        background-color: #330000;
+        color: #FF5C5C;
+        padding: 4px 10px;
+        border-radius: 5px;
+        font-weight: bold;
+        font-size: 0.85em;
+    }
+    .metric-card {
+        background-color: #1A1A1A;
+        border: 1px solid #333333;
+        padding: 20px;
+        border-radius: 8px;
+        text-align: center;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- Google Sheets Connection ---
+@st.cache_resource
+def init_connection():
+    # Looks for Streamlit secrets configuration for secure OAuth credentials
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    
+    if "gcp_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    else:
+        # Fallback local testing file if configured
+        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+        
+    client = gspread.authorize(creds)
+    # Opens your workbook by title
+    return client.open("Pitch Black Pokemon Set Tracker")
+
+try:
+    gc = init_connection()
+except Exception as e:
+    st.error(f"Failed to connect to Google Sheets. Check your credentials in Streamlit Secrets. Error: {e}")
+    st.stop()
+
+# --- App Header ---
+st.title("⚡ Pokémon Master Set Pokédex")
+st.markdown("Visual Collection Tracker • Pitch Black Theme Edition")
+
+# Set Selector Sidebar
+sheet_names = [sheet.title for sheet in gc.worksheets()]
+selected_sheet_name = st.sidebar.selectbox("Select Set / Tab", sheet_names)
+
+# Load data from the selected worksheet
+worksheet = gc.worksheet(selected_sheet_name)
+data = worksheet.get_all_records(expected_headers=['Card #', 'Card Name', 'Regular Qty', 'Reverse Holo Qty', 'Holo / Ultra Rare Qty', 'Status'])
+
+# Clean and convert to DataFrame
+df = pd.DataFrame(data)
+
+# Ensure numeric quantities
+for col in ['Regular Qty', 'Reverse Holo Qty', 'Holo / Ultra Rare Qty']:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors='fillna').fillna(0).astype(int)
+
+# Calculate dynamic status if empty
+if 'Status' not in df.columns or df['Status'].isna().all():
+    df['Status'] = df.apply(lambda r: 'HAVE' if (r['Regular Qty'] + r['Reverse Holo Qty'] + r['Holo / Ultra Rare Qty']) > 0 else 'MISSING', axis=1)
+
+# --- Top KPI Summary Dashboard ---
+total_cards = len(df)
+owned_cards = len(df[df['Status'] == 'HAVE'])
+needed_cards = total_cards - owned_cards
+completion_rate = (owned_cards / total_cards) * 100 if total_cards > 0 else 0
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.markdown(f"""
+        <div class="metric-card">
+            <h3>Cards Owned</h3>
+            <h1 style="color: #00FF66;">{owned_cards}</h1>
+        </div>
+    """, unsafe_allow_html=True)
+with col2:
+    st.markdown(f"""
+        <div class="metric-card">
+            <h3>Cards Needed</h3>
+            <h1 style="color: #FF5C5C;">{needed_cards}</h1>
+        </div>
+    """, unsafe_allow_html=True)
+with col3:
+    st.markdown(f"""
+        <div class="metric-card">
+            <h3>Completion Rate</h3>
+            <h1 style="color: #3399FF;">{completion_rate:.1f}%</h1>
+        </div>
+    """, unsafe_allow_html=True)
+
+st.divider()
+
+# --- View Toggle & Filters ---
+view_mode = st.sidebar.radio("View Mode", ["Pokédex Grid", "Detailed Table"])
+status_filter = st.sidebar.selectbox("Filter Status", ["All", "HAVE", "MISSING"])
+
+filtered_df = df.copy()
+if status_filter != "All":
+    filtered_df = filtered_df[filtered_df['Status'] == status_filter]
+
+# --- Pokédex Grid View ---
+if view_mode == "Pokédex Grid":
+    st.subheader(f"📖 {selected_sheet_name} Pokédex Grid")
+    
+    cols_per_row = 4
+    grid_cols = st.columns(cols_per_row)
+    
+    for index, row in filtered_df.reset_index().iterrows():
+        col_idx = index % cols_per_row
+        with grid_cols[col_idx]:
+            status_class = "have-badge" if row['Status'] == 'HAVE' else "missing-badge"
+            total_qty = row['Regular Qty'] + row['Reverse Holo Qty'] + row['Holo / Ultra Rare Qty']
+            
+            st.markdown(f"""
+                <div class="card-box">
+                    <span style="color: #888; font-size: 0.9em;">{row['Card #']}</span>
+                    <h4 style="margin: 5px 0; color: #FFF;">{row['Card Name']}</h4>
+                    <span class="{status_class}">{row['Status']}</span>
+                    <p style="margin-top: 10px; font-size: 0.85em; color: #BBB;">
+                        Reg: {row['Regular Qty']} | Rev: {row['Reverse Holo Qty']} | Holo/ex: {row['Holo / Ultra Rare Qty']}
+                    </p>
+                </div>
+            """, unsafe_allow_html=True)
+
+# --- Detailed Table View ---
+else:
+    st.subheader(f"📋 {selected_sheet_name} Collection Table")
+    st.dataframe(
+        filtered_df[['Card #', 'Card Name', 'Regular Qty', 'Reverse Holo Qty', 'Holo / Ultra Rare Qty', 'Status']],
+        use_container_width=True,
+        hide_index=True
+    )
