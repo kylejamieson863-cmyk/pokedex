@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import base64
 import json
 
 # --- Page Configuration & Pitch-Black Theme Styling ---
@@ -53,26 +52,27 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Google Sheets Connection via Base64 Secret ---
+# --- Google Sheets Connection ---
 @st.cache_resource
 def init_connection():
+    # Looks for Streamlit secrets configuration for secure OAuth credentials
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     
-    if "gcp_service_account" in st.secrets and "encoded_key" in st.secrets["gcp_service_account"]:
-        encoded_bytes = st.secrets["gcp_service_account"]["encoded_key"].encode("utf-8")
-        decoded_json = base64.b64decode(encoded_bytes).decode("utf-8")
-        creds_dict = json.loads(decoded_json)
+    if "gcp_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     else:
+        # Fallback local testing file if configured
         creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
         
     client = gspread.authorize(creds)
+    # Opens your workbook by title
     return client.open("Pitch Black Pokemon Set Tracker")
 
 try:
     gc = init_connection()
 except Exception as e:
-    st.error(f"Failed to connect to Google Sheets. Check your credentials setup in Streamlit Secrets. Error: {e}")
+    st.error(f"Failed to connect to Google Sheets. Check your credentials in Streamlit Secrets. Error: {e}")
     st.stop()
 
 # --- App Header ---
@@ -93,7 +93,7 @@ df = pd.DataFrame(data)
 # Ensure numeric quantities
 for col in ['Regular Qty', 'Reverse Holo Qty', 'Holo / Ultra Rare Qty']:
     if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+        df[col] = pd.to_numeric(df[col], errors='fillna').fillna(0).astype(int)
 
 # Calculate dynamic status if empty
 if 'Status' not in df.columns or df['Status'].isna().all():
@@ -149,6 +149,7 @@ if view_mode == "Pokédex Grid":
         col_idx = index % cols_per_row
         with grid_cols[col_idx]:
             status_class = "have-badge" if row['Status'] == 'HAVE' else "missing-badge"
+            total_qty = row['Regular Qty'] + row['Reverse Holo Qty'] + row['Holo / Ultra Rare Qty']
             
             st.markdown(f"""
                 <div class="card-box">
