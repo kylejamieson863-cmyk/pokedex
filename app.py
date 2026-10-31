@@ -1,8 +1,5 @@
 import streamlit as st
 import pandas as pd
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-import json
 
 # --- Page Configuration & Pitch-Black Theme Styling ---
 st.set_page_config(
@@ -52,48 +49,46 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Google Sheets Connection ---
-@st.cache_resource
-def init_connection():
-    # Looks for Streamlit secrets configuration for secure OAuth credentials
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    
-    if "gcp_service_account" in st.secrets:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    else:
-        # Fallback local testing file if configured
-        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-        
-    client = gspread.authorize(creds)
-    # Opens your workbook by title
-    return client.open("Pitch Black Pokemon Set Tracker")
+# --- Google Sheets Public Connection ---
+# Replace this with your actual Google Sheet ID from your URL (the long string between /d/ and /edit)
+SPREADSHEET_ID = "1dlzgb3cwAahXU1B-Ngsqt5wgzu-sm38-Ts-SnF..." 
 
-try:
-    gc = init_connection()
-except Exception as e:
-    st.error(f"Failed to connect to Google Sheets. Check your credentials in Streamlit Secrets. Error: {e}")
-    st.stop()
+# Define your tab names and their corresponding GIDs (found at the end of your browser URL when clicking a tab)
+SHEETS_MAP = {
+    "Pitch Black": "0", # Usually the first tab is gid=0
+    "Chaos Rising": "12345678", # Replace with your actual tab gid numbers
+    "Delta Reign": "87654321",
+    "Perfect Order": "11223344"
+}
 
-# --- App Header ---
 st.title("⚡ Pokémon Master Set Pokédex")
 st.markdown("Visual Collection Tracker • Pitch Black Theme Edition")
 
 # Set Selector Sidebar
-sheet_names = [sheet.title for sheet in gc.worksheets()]
-selected_sheet_name = st.sidebar.selectbox("Select Set / Tab", sheet_names)
+selected_sheet_name = st.sidebar.selectbox("Select Set / Tab", list(SHEETS_MAP.keys()))
 
-# Load data from the selected worksheet
-worksheet = gc.worksheet(selected_sheet_name)
-data = worksheet.get_all_records(expected_headers=['Card #', 'Card Name', 'Regular Qty', 'Reverse Holo Qty', 'Holo / Ultra Rare Qty', 'Status'])
+@st.cache_data(ttl=600)
+def load_sheet_data(sheet_id, gid):
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+    return pd.read_csv(url)
 
-# Clean and convert to DataFrame
-df = pd.DataFrame(data)
+try:
+    gid = SHEETS_MAP[selected_sheet_name]
+    df = load_sheet_data(SPREADSHEET_ID, gid)
+except Exception as e:
+    st.error(f"Failed to load Google Sheet. Check your Sheet ID and GIDs. Error: {e}")
+    st.stop()
+
+# Ensure expected columns exist
+expected_headers = ['Card #', 'Card Name', 'Regular Qty', 'Reverse Holo Qty', 'Holo / Ultra Rare Qty', 'Status']
+for col in expected_headers:
+    if col not in df.columns and col != 'Status':
+        df[col] = 0
 
 # Ensure numeric quantities
 for col in ['Regular Qty', 'Reverse Holo Qty', 'Holo / Ultra Rare Qty']:
     if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='fillna').fillna(0).astype(int)
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
 
 # Calculate dynamic status if empty
 if 'Status' not in df.columns or df['Status'].isna().all():
@@ -148,16 +143,18 @@ if view_mode == "Pokédex Grid":
     for index, row in filtered_df.reset_index().iterrows():
         col_idx = index % cols_per_row
         with grid_cols[col_idx]:
-            status_class = "have-badge" if row['Status'] == 'HAVE' else "missing-badge"
-            total_qty = row['Regular Qty'] + row['Reverse Holo Qty'] + row['Holo / Ultra Rare Qty']
+            status_class = "have-badge" if str(row['Status']).strip() == 'HAVE' else "missing-badge"
+            reg = row.get('Regular Qty', 0)
+            rev = row.get('Reverse Holo Qty', 0)
+            holo = row.get('Holo / Ultra Rare Qty', 0)
             
             st.markdown(f"""
                 <div class="card-box">
-                    <span style="color: #888; font-size: 0.9em;">{row['Card #']}</span>
-                    <h4 style="margin: 5px 0; color: #FFF;">{row['Card Name']}</h4>
-                    <span class="{status_class}">{row['Status']}</span>
+                    <span style="color: #888; font-size: 0.9em;">{row.get('Card #', '')}</span>
+                    <h4 style="margin: 5px 0; color: #FFF;">{row.get('Card Name', '')}</h4>
+                    <span class="{status_class}">{row.get('Status', 'MISSING')}</span>
                     <p style="margin-top: 10px; font-size: 0.85em; color: #BBB;">
-                        Reg: {row['Regular Qty']} | Rev: {row['Reverse Holo Qty']} | Holo/ex: {row['Holo / Ultra Rare Qty']}
+                        Reg: {reg} | Rev: {rev} | Holo/ex: {holo}
                     </p>
                 </div>
             """, unsafe_allow_html=True)
@@ -166,7 +163,7 @@ if view_mode == "Pokédex Grid":
 else:
     st.subheader(f"📋 {selected_sheet_name} Collection Table")
     st.dataframe(
-        filtered_df[['Card #', 'Card Name', 'Regular Qty', 'Reverse Holo Qty', 'Holo / Ultra Rare Qty', 'Status']],
+        filtered_df[[c for c in expected_headers if c in filtered_df.columns]],
         use_container_width=True,
         hide_index=True
     )
